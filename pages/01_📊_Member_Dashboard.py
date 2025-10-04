@@ -418,6 +418,7 @@ else:
             showgrid=True,
             gridcolor='rgba(156, 163, 175, 0.2)',
             zeroline=False,
+            dtick=1,  # Force whole number increments
         ),
         yaxis=dict(
             showgrid=False,
