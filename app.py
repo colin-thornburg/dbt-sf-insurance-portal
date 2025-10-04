@@ -98,7 +98,7 @@ def prepare_app():
 
 st.set_page_config(
     page_title="AI Benefits Portal - Authentication",
-    page_icon="🔐",
+    page_icon="🛡️",
     layout="wide",
 )
 
