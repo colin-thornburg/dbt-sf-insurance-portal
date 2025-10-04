@@ -347,21 +347,88 @@ st.subheader("Spend Over Time")
 if spend_ts.empty:
     st.info("No claim activity available for this member yet.")
 else:
-    chart_df = spend_ts.set_index("claim_date")[
-        [
-            col
-            for col in ["ytd_member_responsibility", "total_paid_by_insurance"]
-            if col in spend_ts
-        ]
-    ]
-    st.line_chart(chart_df)
+    import plotly.graph_objects as go
+    
+    fig = go.Figure()
+    
+    if "ytd_member_responsibility" in spend_ts.columns:
+        fig.add_trace(go.Scatter(
+            x=spend_ts["claim_date"],
+            y=spend_ts["ytd_member_responsibility"],
+            name="Member Responsibility",
+            mode='lines+markers',
+            line=dict(color='#6366f1', width=3),
+            marker=dict(size=6),
+        ))
+    
+    if "total_paid_by_insurance" in spend_ts.columns:
+        fig.add_trace(go.Scatter(
+            x=spend_ts["claim_date"],
+            y=spend_ts["total_paid_by_insurance"],
+            name="Insurance Paid",
+            mode='lines+markers',
+            line=dict(color='#10b981', width=3),
+            marker=dict(size=6),
+        ))
+    
+    fig.update_layout(
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='#374151'),
+        xaxis=dict(
+            showgrid=True,
+            gridcolor='rgba(156, 163, 175, 0.2)',
+            zeroline=False,
+        ),
+        yaxis=dict(
+            showgrid=True,
+            gridcolor='rgba(156, 163, 175, 0.2)',
+            zeroline=False,
+            tickprefix='$',
+        ),
+        hovermode='x unified',
+        margin=dict(l=0, r=0, t=20, b=0),
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
 
 claim_type_df = get_claims_by_type(member_filter_clause, current_member_email)
 st.subheader("Claims by Type")
 if claim_type_df.empty:
     st.info("No claims by type to display.")
 else:
-    st.bar_chart(claim_type_df.set_index("claim_type")["total_claims"])
+    import plotly.express as px
+    
+    # Create a clean horizontal bar chart
+    fig = px.bar(
+        claim_type_df,
+        y="claim_type",
+        x="total_claims",
+        orientation='h',
+        labels={"claim_type": "Claim Type", "total_claims": "Number of Claims"},
+        color="total_claims",
+        color_continuous_scale=["#dbeafe", "#3b82f6", "#1e40af"],
+    )
+    
+    fig.update_layout(
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='#374151'),
+        xaxis=dict(
+            showgrid=True,
+            gridcolor='rgba(156, 163, 175, 0.2)',
+            zeroline=False,
+        ),
+        yaxis=dict(
+            showgrid=False,
+            categoryorder='total ascending',
+        ),
+        showlegend=False,
+        margin=dict(l=0, r=0, t=20, b=0),
+        coloraxis_showscale=False,
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
 
 provider_df = get_provider_breakdown(member_filter_clause, current_member_email)
 st.subheader("Top Providers")
