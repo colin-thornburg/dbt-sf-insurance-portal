@@ -21,7 +21,7 @@ def keys_exist_in_dict(keys_list: Iterable[str], dct: Mapping[str, Any]) -> bool
     return all(key in dct for key in keys_list)
 
 
-MEMBER_ROSTER_PATH = Path(__file__).resolve().parent / "embedded-app" / "seeds" / "members.csv"
+MEMBER_ROSTER_PATH = Path(__file__).resolve().parent / "data" / "members.csv"
 USER_FILTER_DIMENSION = "member__email"
 
 COMPANY_ID_MAP = {
@@ -122,7 +122,7 @@ def get_member_roster() -> pd.DataFrame:
         df = pd.read_csv(MEMBER_ROSTER_PATH)
     except FileNotFoundError:
         st.error(
-            "Member roster file not found. Ensure `embedded-app/seeds/members.csv` exists."
+            "Member roster file not found. Ensure `data/members.csv` exists."
         )
         return pd.DataFrame()
 

@@ -1,0 +1,16 @@
+member_id,company_id,employee_id,first_name,last_name,email,date_of_birth,gender,plan_id,enrollment_date,is_primary,dependent_of,department,annual_salary
+10001,1001,TC001,Bob,Johnson,bob.johnson@techcorp.com,1985-03-15,M,2001,2023-01-01,TRUE,,Engineering,125000
+10002,1001,TC001D1,Sarah,Johnson,sarah.johnson@techcorp.com,1987-07-22,F,2001,2023-01-01,FALSE,10001,Engineering,
+10003,1001,TC001D2,Tim,Johnson,tim.johnson@techcorp.com,2015-09-10,M,2001,2023-01-01,FALSE,10001,Engineering,
+10004,1001,TC002,Alice,Chen,alice.chen@techcorp.com,1990-11-28,F,2002,2023-01-01,TRUE,,Product,115000
+10005,1001,TC003,Michael,Davis,michael.davis@techcorp.com,1978-05-03,M,2001,2022-06-15,TRUE,,Sales,95000
+20001,1002,RP001,Sam,Wilson,sam.wilson@retailplus.com,1982-08-17,M,2003,2023-01-01,TRUE,,Store Management,65000
+20002,1002,RP001D1,Emily,Wilson,emily.wilson@retailplus.com,1984-12-05,F,2003,2023-01-01,FALSE,20001,Store Management,
+20003,1002,RP002,Jennifer,Martinez,jennifer.martinez@retailplus.com,1995-02-20,F,2004,2023-03-01,TRUE,,Customer Service,42000
+20004,1002,RP003,David,Thompson,david.thompson@retailplus.com,1988-09-14,M,2003,2022-11-01,TRUE,,Logistics,55000
+20005,1002,RP004,Lisa,Anderson,lisa.anderson@retailplus.com,1991-06-30,F,2004,2023-01-01,TRUE,,HR,58000
+30001,1003,MC001,Robert,Miller,robert.miller@manufacturingco.com,1975-04-12,M,2005,2022-08-01,TRUE,,Operations,72000
+30002,1003,MC001D1,Patricia,Miller,patricia.miller@manufacturingco.com,1977-10-25,F,2005,2022-08-01,FALSE,30001,Operations,
+30003,1003,MC002,James,Brown,james.brown@manufacturingco.com,1986-01-18,M,2006,2023-01-01,TRUE,,Quality Control,68000
+30004,1003,MC003,Maria,Garcia,maria.garcia@manufacturingco.com,1993-07-07,F,2005,2023-02-15,TRUE,,Engineering,78000
+30005,1003,MC004,William,Taylor,william.taylor@manufacturingco.com,1980-11-02,M,2006,2022-10-01,TRUE,,Safety,61000
