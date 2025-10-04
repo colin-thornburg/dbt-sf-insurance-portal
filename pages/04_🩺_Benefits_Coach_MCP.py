@@ -10,13 +10,13 @@ import streamlit as st
 
 # first party
 from audit_logger import log_query_execution
-from client import ensure_connection
 from helpers import (
     USER_FILTER_DIMENSION,
     ensure_member_context,
     get_portal_title,
     load_plan_documents,
 )
+from init_app import initialize_app
 from styles import apply_glassmorphic_theme
 
 st.set_page_config(
@@ -61,13 +61,8 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
-ensure_connection()
-
-if "metric_dict" not in st.session_state or "dimension_dict" not in st.session_state:
-    st.error(
-        "Metrics metadata is not loaded. Visit the Home page first to initialize the Semantic Layer connection."
-    )
-    st.stop()
+# Initialize app (loads metrics automatically if needed)
+initialize_app(show_spinner=True)
 
 current_member = ensure_member_context()
 member_email = current_member.get("email")

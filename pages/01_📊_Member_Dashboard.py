@@ -8,12 +8,13 @@ import streamlit as st
 
 # first party
 from audit_logger import log_query_execution
-from client import ensure_connection, get_query_results
+from client import get_query_results
 from helpers import (
     ensure_member_context,
     get_portal_title,
     to_arrow_table,
 )
+from init_app import initialize_app
 from schema import Query
 from styles import apply_glassmorphic_theme
 
@@ -49,7 +50,8 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
-conn = ensure_connection()
+# Initialize app (loads metrics automatically if needed)
+initialize_app(show_spinner=True)
 
 
 def member_filter(member_row: pd.Series) -> str:

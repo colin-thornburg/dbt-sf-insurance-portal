@@ -6,7 +6,7 @@ from typing import Dict, List
 import streamlit as st
 
 # first party
-from client import ensure_connection, get_query_results
+from client import get_query_results
 from helpers import (
     USER_FILTER_DIMENSION,
     construct_cli_command,
@@ -18,6 +18,7 @@ from helpers import (
     get_shared_elements,
     to_arrow_table,
 )
+from init_app import initialize_app
 from styles import apply_glassmorphic_theme
 from queries import GRAPHQL_QUERIES
 from schema import Query, QueryLoader, WhereInput
@@ -44,7 +45,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-ensure_connection()
+# Initialize app (loads metrics automatically if needed)
+initialize_app(show_spinner=True)
 
 if "metric_dict" not in st.session_state:
     st.warning(

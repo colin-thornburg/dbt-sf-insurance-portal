@@ -15,7 +15,6 @@ from audit_logger import (
     init_audit_log,
     validate_filter_applied,
 )
-from client import ensure_connection
 from helpers import (
     ensure_member_context,
     get_portal_title,
@@ -44,7 +43,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-ensure_connection()
 init_audit_log()
 
 current_member = ensure_member_context()

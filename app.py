@@ -5,95 +5,14 @@ import streamlit.components.v1 as components
 
 # first party
 from audit_logger import get_audit_stats, init_audit_log
-from client import ensure_connection, submit_request
 from helpers import (
     ensure_member_context,
     get_member_roster,
     get_portal_title,
     set_member_context,
-    url_for_disco,
 )
-from llm.semantic_layer_docs import create_chroma_db
-from queries import GRAPHQL_QUERIES
+from init_app import initialize_app
 from styles import apply_glassmorphic_theme
-
-
-def retrieve_saved_queries():
-    payload = {"query": GRAPHQL_QUERIES["saved_queries"]}
-    json_data = submit_request(st.session_state.conn, payload)
-    saved_queries = json_data.get("data", {}).get("savedQueries", [])
-    if saved_queries:
-        st.session_state.saved_queries = saved_queries
-
-
-def retrieve_account_id():
-    payload = {"query": GRAPHQL_QUERIES["account"], "variables": {"first": 1}}
-    host = url_for_disco()
-
-    # TODO: Temporary hack to get around multi-cell metadata URLs not conforming
-    try:
-        json_data = submit_request(
-            st.session_state.conn, payload, host_override=host, path="/beta/graphql"
-        )
-    except Exception as e:
-        print(f"Error running disco API query for {host}; {e}")
-    else:
-        try:
-            edges = (
-                json_data.get("data", {})
-                .get("environment", {})
-                .get("applied", {})
-                .get("models", {})
-                .get("edges", [])
-            )
-        except AttributeError:
-            # data is None
-            pass
-        else:
-            if edges:
-                st.session_state.account_id = edges[0]["node"]["accountId"]
-                st.session_state.project_id = edges[0]["node"]["projectId"]
-
-
-def prepare_app():
-
-    with st.spinner("Gathering Metrics..."):
-        payload = {"query": GRAPHQL_QUERIES["metrics"]}
-        json = submit_request(st.session_state.conn, payload)
-        try:
-            metrics = json["data"]["metrics"]
-        except TypeError:
-
-            # `data` is None and there may be an error
-            try:
-                error = json["errors"][0]["message"]
-                st.error(error)
-            except (KeyError, TypeError):
-                st.warning(
-                    "No metrics returned.  Ensure your project has metrics defined "
-                    "and a production job has been run successfully."
-                )
-        else:
-            create_chroma_db(metrics)
-            st.session_state.metric_dict = {m["name"]: m for m in metrics}
-            st.session_state.dimension_dict = {
-                dim["name"]: dim for metric in metrics for dim in metric["dimensions"]
-            }
-            for metric in st.session_state.metric_dict:
-                st.session_state.metric_dict[metric]["dimensions"] = [
-                    d["name"]
-                    for d in st.session_state.metric_dict[metric]["dimensions"]
-                ]
-            if not st.session_state.metric_dict:
-                # Query worked, but nothing returned
-                st.warning(
-                    "No Metrics returned!  Ensure your project has metrics defined "
-                    "and a production job has been run successfully."
-                )
-            else:
-                retrieve_saved_queries()
-                retrieve_account_id()
-                st.success("Success!  Explore the rest of the app!")
 
 
 st.set_page_config(
@@ -104,7 +23,7 @@ st.set_page_config(
 
 # Apply theme IMMEDIATELY to prevent flash of unstyled content
 # We'll apply a default theme first, then update with company-specific colors later
-ensure_connection()
+initialize_app(show_spinner=True)
 
 # Get member context early to determine company theme
 member_roster = get_member_roster()
@@ -138,9 +57,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-if "metric_dict" not in st.session_state:
-    prepare_app()
-else:
+if "metric_dict" in st.session_state and st.session_state.metric_dict:
     st.success("Connected to the dbt Semantic Layer. Metrics are ready to use.")
 
 # member_roster was already loaded earlier for theme application

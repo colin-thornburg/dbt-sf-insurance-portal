@@ -9,7 +9,7 @@ import streamlit as st
 from openai import OpenAI
 
 # first party
-from client import ensure_connection, get_query_results
+from client import get_query_results
 from helpers import (
     USER_FILTER_DIMENSION,
     create_tabs,
@@ -17,6 +17,7 @@ from helpers import (
     get_portal_title,
     to_arrow_table,
 )
+from init_app import initialize_app
 from schema import Query
 from styles import apply_glassmorphic_theme
 
@@ -50,8 +51,8 @@ class Metric:
     description: Optional[str]
     dimensions: List[str]
 
-
-ensure_connection()
+# Initialize app (loads metrics automatically if needed)
+initialize_app(show_spinner=True)
 
 if "metric_dict" not in st.session_state:
     st.warning(

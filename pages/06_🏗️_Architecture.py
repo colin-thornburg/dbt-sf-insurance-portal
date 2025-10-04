@@ -2,11 +2,11 @@
 import streamlit as st
 
 # first party
-from client import ensure_connection
 from helpers import (
     ensure_member_context,
     get_portal_title,
 )
+from init_app import initialize_app
 from styles import apply_glassmorphic_theme
 
 st.set_page_config(
@@ -31,7 +31,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-ensure_connection()
+# Initialize app (loads metrics automatically if needed)
+initialize_app(show_spinner=True)
 
 current_member = ensure_member_context()
 company_name = current_member.get("company_display")
