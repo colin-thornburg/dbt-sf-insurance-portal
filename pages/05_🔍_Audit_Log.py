@@ -83,14 +83,6 @@ col4.metric(
     delta_color="inverse",
 )
 
-# Query breakdown
-if stats["queries_by_type"]:
-    st.subheader("Queries by Type")
-    type_df = pd.DataFrame(
-        list(stats["queries_by_type"].items()), columns=["Query Type", "Count"]
-    )
-    st.bar_chart(type_df.set_index("Query Type"))
-
 # Security violations section
 if not violations_df.empty:
     st.subheader("⚠️ Security Violations Detected")
