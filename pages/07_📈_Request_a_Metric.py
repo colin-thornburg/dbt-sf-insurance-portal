@@ -473,6 +473,23 @@ def create_pull_request(branch_name: str, metric_name: str, explanation: str) ->
         pr_url = result.stdout.strip()
         logger.info(f"Created PR: {pr_url}")
         st.success(f"✅ Pull request created!")
+        
+        # Switch back to main branch for future requests
+        try:
+            subprocess.run(
+                ["git", "checkout", "main"],
+                cwd=EMBEDDED_APP_DIR,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            logger.info("Switched back to main branch")
+            st.info("✅ Switched back to main branch")
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Failed to switch to main branch: {e.stderr if e.stderr else str(e)}")
+            # Don't fail the whole operation if we can't switch branches
+            pass
+        
         return pr_url
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else str(e)
