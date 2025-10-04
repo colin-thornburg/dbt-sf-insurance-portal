@@ -464,3 +464,7 @@ yarl==1.20.0
     #   gql
 zstandard==0.23.0
     # via langsmith
+PyGithub==2.8.1
+    # via -r requirements.in
+PyNaCl==1.6.0
+    # via PyGithub

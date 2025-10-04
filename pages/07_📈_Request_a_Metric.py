@@ -1,5 +1,6 @@
 # stdlib
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ from typing import Dict, List, Optional
 
 # third party
 import streamlit as st
+from github import Github, GithubException
 from openai import OpenAI
 
 # first party
@@ -115,202 +117,114 @@ st.markdown(
 st.divider()
 
 # Environment configuration
-DBT_MCP_ENV_FILE = os.getenv(
-    "DBT_MCP_ENV_FILE",
-    str(Path(__file__).resolve().parents[1] / ".env"),
-)
-DBT_MCP_COMMAND = os.getenv("DBT_MCP_COMMAND", "uvx")
-DBT_MCP_ENTRY = os.getenv("DBT_MCP_ENTRY", "dbt-mcp")
-MCP_CLIENT_TIMEOUT = int(os.getenv("DBT_MCP_CLIENT_TIMEOUT", "20"))
-DBT_PROJECT_DIR = os.getenv("DBT_PROJECT_DIR")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# GitHub configuration
-EMBEDDED_APP_REPO = "https://github.com/colin-thornburg/embedded-app.git"
-EMBEDDED_APP_DIR = "/Users/colinthornburg/snow_dcwt/embedded-app"
-SEMANTIC_MODELS_FILE = "models/semantic/semantic_models.yml"
+# GitHub configuration (works with Streamlit Cloud)
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_REPO_OWNER = os.getenv("GITHUB_REPO_OWNER", "colin-thornburg")
+GITHUB_REPO_NAME = os.getenv("GITHUB_REPO_NAME", "embedded-app")
+GITHUB_DEFAULT_BRANCH = os.getenv("GITHUB_DEFAULT_BRANCH", "main")
+GITHUB_SEMANTIC_MODELS_PATH = os.getenv("GITHUB_SEMANTIC_MODELS_PATH", "models/semantic/semantic_models.yml")
 
 
 def validate_environment() -> bool:
-    """Validate required environment variables and directories."""
-    # DBT_PROJECT_DIR is only needed for local development, not for Streamlit Cloud
-    required_env = [
-        "DBT_HOST",
-        "DBT_TOKEN",
-        "DBT_PROD_ENV_ID",
-        "OPENAI_API_KEY",
-    ]
-    missing = [env for env in required_env if not os.getenv(env)]
-    if missing:
-        st.error(
-            "Missing required environment variables: " + ", ".join(missing)
-        )
-        return False
+    """Validate required environment variables."""
+    required_env = {
+        "OPENAI_API_KEY": "OpenAI API key for generating metrics",
+        "GITHUB_TOKEN": "GitHub Personal Access Token for creating PRs",
+        "GITHUB_REPO_OWNER": "GitHub repository owner (e.g., colin-thornburg)",
+        "GITHUB_REPO_NAME": "GitHub repository name (e.g., embedded-app)",
+    }
     
-    # Only validate local paths if DBT_PROJECT_DIR is set (local development)
-    if DBT_PROJECT_DIR:
-        if not Path(DBT_MCP_ENV_FILE).exists():
-            st.error(
-                f"MCP environment file not found at `{DBT_MCP_ENV_FILE}`. Set `DBT_MCP_ENV_FILE` or create the file."
+    missing = {k: v for k, v in required_env.items() if not os.getenv(k)}
+    
+    if missing:
+        st.error("❌ Missing Required Environment Variables")
+        st.markdown("The following environment variables need to be configured:")
+        for env_var, description in missing.items():
+            st.markdown(f"- **`{env_var}`**: {description}")
+        
+        with st.expander("🔧 How to Configure", expanded=False):
+            st.markdown(
+                """
+                ### For Streamlit Cloud:
+                1. Go to your app settings
+                2. Click on "Secrets"
+                3. Add these variables:
+                
+                ```toml
+                OPENAI_API_KEY = "your_openai_key"
+                GITHUB_TOKEN = "your_github_token"
+                GITHUB_REPO_OWNER = "your_github_username"
+                GITHUB_REPO_NAME = "your_repo_name"
+                ```
+                
+                ### For Local Development:
+                Add these to your `.streamlit/secrets.toml` file.
+                
+                ### Generate GitHub Token:
+                1. Go to GitHub → Settings → Developer settings
+                2. Personal access tokens → Tokens (classic)
+                3. Generate new token with `repo` scope
+                """
             )
-            return False
-        if not Path(EMBEDDED_APP_DIR).exists():
-            st.error(
-                f"dbt project directory not found at `{EMBEDDED_APP_DIR}`. Clone the repository first."
-            )
-            return False
-    else:
-        # Running in Streamlit Cloud - this feature requires local setup
-        st.info(
-            """
-            ℹ️ **Request a Metric** requires a local dbt project setup.
-            
-            This feature creates pull requests in your dbt repository, which requires:
-            - Local clone of your dbt project
-            - GitHub CLI installed and authenticated
-            - Write access to the repository
-            
-            This feature is currently only available when running locally.
-            """
-        )
         return False
     
     return True
 
 
-def validate_git_state() -> tuple[bool, str]:
-    """Validate git repository state before creating PR."""
-    import subprocess
-
+def validate_github_access() -> tuple[bool, str]:
+    """Validate GitHub API access and repository permissions."""
     try:
-        # Check if gh CLI is available
-        result = subprocess.run(
-            ["gh", "--version"],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode != 0:
-            return False, "GitHub CLI (gh) is not installed. Install it with: `brew install gh`"
-
-        # Check if gh is authenticated
-        result = subprocess.run(
-            ["gh", "auth", "status"],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode != 0:
-            return False, "GitHub CLI is not authenticated. Run: `gh auth login`"
-
-        # For demo purposes: automatically switch to main if not already on it
-        result = subprocess.run(
-            ["git", "branch", "--show-current"],
-            cwd=EMBEDDED_APP_DIR,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-
-        current_branch = result.stdout.strip()
-        if current_branch != "main":
-            logger.info(f"Currently on branch '{current_branch}', switching to main...")
-            try:
-                # Switch to main branch
-                subprocess.run(
-                    ["git", "checkout", "main"],
-                    cwd=EMBEDDED_APP_DIR,
-                    capture_output=True,
-                    text=True,
-                    check=True
-                )
-                logger.info("Successfully switched to main branch")
-            except subprocess.CalledProcessError as e:
-                return False, f"Failed to switch to main branch: {e.stderr if e.stderr else str(e)}"
-
-        # Check for uncommitted changes (but be lenient for demo)
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=EMBEDDED_APP_DIR,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-
-        if result.stdout.strip():
-            # For demo: try to stash changes automatically
-            logger.info("Found uncommitted changes, attempting to stash...")
-            try:
-                subprocess.run(
-                    ["git", "stash", "-u"],
-                    cwd=EMBEDDED_APP_DIR,
-                    capture_output=True,
-                    text=True,
-                    check=True
-                )
-                logger.info("Successfully stashed uncommitted changes")
-            except subprocess.CalledProcessError as e:
-                return False, f"The dbt project has uncommitted changes. Please commit or stash them first.\n\nUncommitted files:\n{result.stdout}"
-
-        # Fetch and pull latest from origin
-        subprocess.run(
-            ["git", "fetch", "origin"],
-            cwd=EMBEDDED_APP_DIR,
-            capture_output=True,
-            check=True
-        )
-
-        # Pull latest main
-        subprocess.run(
-            ["git", "pull", "origin", "main"],
-            cwd=EMBEDDED_APP_DIR,
-            capture_output=True,
-            check=True
-        )
-
-        return True, "Git state is ready"
-
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Git validation error: {e.stderr if e.stderr else str(e)}")
-        return False, f"Git command failed: {e.stderr if e.stderr else str(e)}"
+        g = Github(GITHUB_TOKEN)
+        repo = g.get_repo(f"{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}")
+        
+        # Check if we have write access
+        if not repo.permissions.push:
+            return False, f"No write access to repository {GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}"
+        
+        # Check if the semantic models file exists
+        try:
+            repo.get_contents(GITHUB_SEMANTIC_MODELS_PATH, ref=GITHUB_DEFAULT_BRANCH)
+        except GithubException as e:
+            return False, f"Semantic models file not found at {GITHUB_SEMANTIC_MODELS_PATH}"
+        
+        logger.info(f"Successfully validated access to {GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}")
+        return True, f"GitHub repository access verified"
+    
+    except GithubException as e:
+        logger.error(f"GitHub API error: {e}")
+        if e.status == 401:
+            return False, "GitHub token is invalid. Please check your GITHUB_TOKEN"
+        elif e.status == 404:
+            return False, f"Repository {GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME} not found or no access"
+        else:
+            return False, f"GitHub API error: {e.data.get('message', str(e))}"
     except Exception as e:
-        logger.error(f"Unexpected error during git validation: {e}")
+        logger.error(f"Unexpected error validating GitHub access: {e}")
         return False, f"Unexpected error: {str(e)}"
 
 
-async def read_semantic_models_via_mcp() -> Optional[str]:
-    """Read existing semantic models using dbt MCP."""
+def read_semantic_models_from_github() -> str:
+    """Read the semantic models YAML file from GitHub."""
     try:
-        async with MCPServerStdio(
-            name="dbt",
-            params={
-                "command": DBT_MCP_COMMAND,
-                "args": [
-                    "--env-file",
-                    DBT_MCP_ENV_FILE,
-                    DBT_MCP_ENTRY,
-                ],
-            },
-            client_session_timeout_seconds=MCP_CLIENT_TIMEOUT,
-            cache_tools_list=True,
-        ) as server:
-            # List available resources
-            logger.info("Listing dbt resources via MCP...")
-            tools = await server.client.list_tools()
-            logger.info(f"Available MCP tools: {[t.name for t in tools.tools]}")
-
-            # For now, we'll read the file directly since MCP doesn't expose file reading
-            # In the future, we could use get_resource if it provides YAML content
-            return None
+        g = Github(GITHUB_TOKEN)
+        repo = g.get_repo(f"{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}")
+        
+        # Get file from GitHub
+        file_content = repo.get_contents(GITHUB_SEMANTIC_MODELS_PATH, ref=GITHUB_DEFAULT_BRANCH)
+        
+        # Decode base64 content
+        content = base64.b64decode(file_content.content).decode('utf-8')
+        logger.info(f"Successfully read {GITHUB_SEMANTIC_MODELS_PATH} from GitHub")
+        return content
+    
+    except GithubException as e:
+        logger.error(f"Failed to read semantic models from GitHub: {e}")
+        raise FileNotFoundError(f"Could not read {GITHUB_SEMANTIC_MODELS_PATH} from GitHub: {e}")
     except Exception as e:
-        logger.error(f"Error reading via MCP: {e}")
-        return None
-
-
-def read_semantic_models_file() -> str:
-    """Read the semantic models YAML file directly."""
-    file_path = Path(EMBEDDED_APP_DIR) / SEMANTIC_MODELS_FILE
-    if not file_path.exists():
-        raise FileNotFoundError(f"Semantic models file not found at {file_path}")
-    return file_path.read_text()
+        logger.error(f"Unexpected error reading from GitHub: {e}")
+        raise
 
 
 def generate_metric_yaml(user_request: str, existing_models: str) -> Dict:
@@ -373,106 +287,70 @@ Please analyze the existing semantic models and generate the appropriate YAML co
         raise
 
 
-def create_git_branch(metric_name: str) -> str:
-    """Create a new git branch for the metric."""
-    import subprocess
-
+def create_branch_and_update_file(metric_name: str, new_measures_yaml: Optional[str], new_metric_yaml: str, commit_message: str) -> str:
+    """Create a new branch and update the semantic models file via GitHub API."""
     branch_name = f"metric/{metric_name.replace('_', '-')}"
-
+    
     try:
-        # Create and checkout new branch (we already validated we're on main)
-        result = subprocess.run(
-            ["git", "checkout", "-b", branch_name],
-            cwd=EMBEDDED_APP_DIR,
-            check=True,
-            capture_output=True,
-            text=True
-        )
-
+        g = Github(GITHUB_TOKEN)
+        repo = g.get_repo(f"{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}")
+        
+        # Get the current file from main branch
+        file = repo.get_contents(GITHUB_SEMANTIC_MODELS_PATH, ref=GITHUB_DEFAULT_BRANCH)
+        current_content = base64.b64decode(file.content).decode('utf-8')
+        
+        # Update content
+        updated_content = current_content
+        
+        # Add new measures if needed
+        if new_measures_yaml and new_measures_yaml.strip():
+            metrics_index = updated_content.find("\nmetrics:")
+            if metrics_index != -1:
+                updated_content = updated_content[:metrics_index] + "\n" + new_measures_yaml.strip() + updated_content[metrics_index:]
+        
+        # Add new metric at the end
+        updated_content += "\n" + new_metric_yaml.strip() + "\n"
+        
+        # Get the SHA of the main branch
+        main_branch = repo.get_branch(GITHUB_DEFAULT_BRANCH)
+        
+        # Create new branch from main
+        repo.create_git_ref(ref=f"refs/heads/{branch_name}", sha=main_branch.commit.sha)
         logger.info(f"Created branch: {branch_name}")
         st.info(f"✅ Created branch: `{branch_name}`")
+        
+        # Update file in new branch
+        full_commit_message = f"""{commit_message}
+
+🤖 Generated via AI Benefits Portal
+
+Co-Authored-By: AI Agent <noreply@example.com>"""
+        
+        repo.update_file(
+            path=GITHUB_SEMANTIC_MODELS_PATH,
+            message=full_commit_message,
+            content=updated_content,
+            sha=file.sha,
+            branch=branch_name
+        )
+        
+        logger.info(f"Updated {GITHUB_SEMANTIC_MODELS_PATH} in branch {branch_name}")
+        st.info(f"✅ Updated {GITHUB_SEMANTIC_MODELS_PATH}")
+        
         return branch_name
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr if e.stderr else str(e)
-        logger.error(f"Git branch creation failed: {error_msg}")
-        st.error(f"Failed to create git branch: {error_msg}")
+    
+    except GithubException as e:
+        logger.error(f"GitHub API error: {e}")
+        st.error(f"Failed to create branch or update file: {e.data.get('message', str(e))}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        st.error(f"Unexpected error: {str(e)}")
         raise
 
 
-def update_semantic_models_file(new_measures_yaml: Optional[str], new_metric_yaml: str):
-    """Update the semantic models YAML file with new content."""
-    file_path = Path(EMBEDDED_APP_DIR) / SEMANTIC_MODELS_FILE
-    current_content = file_path.read_text()
-
-    updated_content = current_content
-
-    # Add new measures if needed (insert before metrics section)
-    if new_measures_yaml and new_measures_yaml.strip():
-        # Find the measures section and add to it
-        # This is a simple append - in production you'd want more sophisticated YAML parsing
-        metrics_index = updated_content.find("\nmetrics:")
-        if metrics_index != -1:
-            updated_content = updated_content[:metrics_index] + "\n" + new_measures_yaml.strip() + updated_content[metrics_index:]
-
-    # Add new metric at the end
-    updated_content += "\n" + new_metric_yaml.strip() + "\n"
-
-    file_path.write_text(updated_content)
-    logger.info(f"Updated {file_path}")
-
-
-def commit_and_push(branch_name: str, commit_message: str):
-    """Commit changes and push to remote."""
-    import subprocess
-
-    try:
-        # Add the semantic models file
-        result = subprocess.run(
-            ["git", "add", SEMANTIC_MODELS_FILE],
-            cwd=EMBEDDED_APP_DIR,
-            check=True,
-            capture_output=True,
-            text=True
-        )
-
-        # Commit
-        full_message = f"""{commit_message}
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-
-Co-Authored-By: Claude <noreply@anthropic.com>"""
-
-        result = subprocess.run(
-            ["git", "commit", "-m", full_message],
-            cwd=EMBEDDED_APP_DIR,
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        st.info(f"✅ Committed changes")
-
-        # Push
-        result = subprocess.run(
-            ["git", "push", "-u", "origin", branch_name],
-            cwd=EMBEDDED_APP_DIR,
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        st.info(f"✅ Pushed to remote: `{branch_name}`")
-
-        logger.info(f"Committed and pushed to {branch_name}")
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr if e.stderr else str(e)
-        logger.error(f"Git commit/push failed: {error_msg}")
-        st.error(f"Failed to commit/push: {error_msg}")
-        raise
-
-
-def create_pull_request(branch_name: str, metric_name: str, explanation: str) -> str:
-    """Create a pull request using gh CLI."""
-    import subprocess
-
+def create_pull_request_via_api(branch_name: str, metric_name: str, explanation: str) -> str:
+    """Create a pull request using GitHub API."""
     pr_title = f"Add metric: {metric_name}"
     pr_body = f"""## Summary
 - Added new metric: `{metric_name}`
@@ -486,49 +364,34 @@ def create_pull_request(branch_name: str, metric_name: str, explanation: str) ->
 - [ ] Query the new metric via Semantic Layer to verify it works
 - [ ] Check that the metric appears in downstream applications
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+🤖 Generated via AI Benefits Portal
 """
 
     try:
-        result = subprocess.run(
-            [
-                "gh", "pr", "create",
-                "--title", pr_title,
-                "--body", pr_body,
-                "--base", "main",
-                "--head", branch_name
-            ],
-            cwd=EMBEDDED_APP_DIR,
-            check=True,
-            capture_output=True,
-            text=True
+        g = Github(GITHUB_TOKEN)
+        repo = g.get_repo(f"{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}")
+        
+        # Create pull request
+        pr = repo.create_pull(
+            title=pr_title,
+            body=pr_body,
+            head=branch_name,
+            base=GITHUB_DEFAULT_BRANCH
         )
-
-        pr_url = result.stdout.strip()
+        
+        pr_url = pr.html_url
         logger.info(f"Created PR: {pr_url}")
         st.success(f"✅ Pull request created!")
         
-        # Switch back to main branch for future requests
-        try:
-            subprocess.run(
-                ["git", "checkout", "main"],
-                cwd=EMBEDDED_APP_DIR,
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            logger.info("Switched back to main branch")
-            st.info("✅ Switched back to main branch")
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"Failed to switch to main branch: {e.stderr if e.stderr else str(e)}")
-            # Don't fail the whole operation if we can't switch branches
-            pass
-        
         return pr_url
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr if e.stderr else str(e)
-        logger.error(f"PR creation failed: {error_msg}")
-        st.error(f"Failed to create PR: {error_msg}")
+    
+    except GithubException as e:
+        logger.error(f"Failed to create PR: {e}")
+        st.error(f"Failed to create pull request: {e.data.get('message', str(e))}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error creating PR: {e}")
+        st.error(f"Unexpected error: {str(e)}")
         raise
 
 
@@ -582,15 +445,15 @@ user_request = st.text_area(
     help="Be as specific as possible. Include what you're measuring, how to calculate it, and any groupings or filters."
 )
 
-# Show git repository status
+# Show GitHub repository status
 with st.expander("🔧 System Status (Advanced)", expanded=False):
-    st.caption("Check that your local dbt project and GitHub connection are properly configured.")
-    git_valid, git_message = validate_git_state()
-    if git_valid:
-        st.success(f"✅ {git_message}")
-        st.info(f"**Repository:** {EMBEDDED_APP_REPO}\n\n**Local Path:** `{EMBEDDED_APP_DIR}`")
+    st.caption("Check that GitHub connection is properly configured.")
+    github_valid, github_message = validate_github_access()
+    if github_valid:
+        st.success(f"✅ {github_message}")
+        st.info(f"**Repository:** `{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}`\n\n**Branch:** `{GITHUB_DEFAULT_BRANCH}`\n\n**File:** `{GITHUB_SEMANTIC_MODELS_PATH}`")
     else:
-        st.error(f"❌ {git_message}")
+        st.error(f"❌ {github_message}")
         st.warning("⚠️ Please fix the issues above before creating a metric PR.")
 
 # Initialize session state
@@ -604,18 +467,18 @@ if st.button("🚀 Generate Metric YAML", type="primary", disabled=not user_requ
     if not validate_environment():
         st.stop()
 
-    # Validate git state early
-    git_valid, git_message = validate_git_state()
-    if not git_valid:
-        st.error(f"❌ Git Repository Issue\n\n{git_message}")
+    # Validate GitHub access early
+    github_valid, github_message = validate_github_access()
+    if not github_valid:
+        st.error(f"❌ GitHub Access Issue\n\n{github_message}")
         st.info("💡 Fix the issue above and try again.")
         st.stop()
 
     with st.spinner("Analyzing your request..."):
         try:
-            # Read existing semantic models
-            with st.status("Reading current semantic models...") as status:
-                existing_models = read_semantic_models_file()
+            # Read existing semantic models from GitHub
+            with st.status("Reading current semantic models from GitHub...") as status:
+                existing_models = read_semantic_models_from_github()
                 status.update(label="✅ Read semantic models", state="complete")
 
             # Generate metric YAML using OpenAI
@@ -691,27 +554,19 @@ if st.session_state.generated_metric and not st.session_state.pr_created:
         if st.button("✅ Create Pull Request", type="primary", use_container_width=True):
             with st.spinner("Creating pull request..."):
                 try:
-                    # Create git branch
-                    with st.status("Creating git branch...") as status:
-                        branch_name = create_git_branch(result.get("metric_name"))
-                        status.update(label=f"✅ Created branch: {branch_name}", state="complete")
-
-                    # Update file
-                    with st.status("Updating semantic models file...") as status:
-                        update_semantic_models_file(
+                    # Create branch and update file via GitHub API
+                    with st.status("Creating branch and updating file...") as status:
+                        branch_name = create_branch_and_update_file(
+                            result.get("metric_name"),
                             result.get("new_measures_yaml"),
-                            result.get("new_metric_yaml")
+                            result.get("new_metric_yaml"),
+                            result.get("commit_message")
                         )
-                        status.update(label="✅ Updated semantic models", state="complete")
+                        status.update(label=f"✅ Created branch and committed changes", state="complete")
 
-                    # Commit and push
-                    with st.status("Committing and pushing changes...") as status:
-                        commit_and_push(branch_name, result.get("commit_message"))
-                        status.update(label="✅ Pushed to GitHub", state="complete")
-
-                    # Create PR
+                    # Create PR via GitHub API
                     with st.status("Creating pull request...") as status:
-                        pr_url = create_pull_request(
+                        pr_url = create_pull_request_via_api(
                             branch_name,
                             result.get("metric_name"),
                             result.get("explanation")
@@ -750,28 +605,43 @@ if st.session_state.generated_metric and not st.session_state.pr_created:
 
 st.divider()
 
-# Show recent PRs (optional)
+# Show recent PRs via GitHub API
 with st.expander("📋 Recent Metric Pull Requests", expanded=False):
     st.caption("View recent metric PRs from your team")
     try:
-        import subprocess
-        result = subprocess.run(
-            ["gh", "pr", "list", "--limit", "10", "--json", "number,title,url,state"],
-            cwd=EMBEDDED_APP_DIR,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        prs = json.loads(result.stdout)
-
+        g = Github(GITHUB_TOKEN)
+        repo = g.get_repo(f"{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}")
+        
+        # Get recent PRs (limit to 10)
+        pulls = repo.get_pulls(state='all', sort='created', direction='desc')
+        prs = []
+        for pr in pulls[:10]:
+            prs.append({
+                'number': pr.number,
+                'title': pr.title,
+                'url': pr.html_url,
+                'state': pr.state.upper(),
+                'merged': pr.merged
+            })
+        
         if prs:
             for pr in prs:
-                status_emoji = "✅" if pr['state'] == "MERGED" else "🔄" if pr['state'] == "OPEN" else "❌"
-                st.markdown(f"{status_emoji} **[#{pr['number']} - {pr['title']}]({pr['url']})** ({pr['state']})")
+                # Determine status emoji
+                if pr['merged']:
+                    status_emoji = "✅"
+                    state = "MERGED"
+                elif pr['state'] == "OPEN":
+                    status_emoji = "🔄"
+                    state = "OPEN"
+                else:
+                    status_emoji = "❌"
+                    state = "CLOSED"
+                
+                st.markdown(f"{status_emoji} **[#{pr['number']} - {pr['title']}]({pr['url']})** ({state})")
         else:
             st.info("No recent pull requests found in this repository.")
     except Exception as e:
-        st.warning("Unable to fetch recent PRs. Make sure GitHub CLI (`gh`) is installed and authenticated.")
+        st.warning("Unable to fetch recent PRs via GitHub API.")
         st.caption(f"Error: {str(e)}")
 
 # Help section
@@ -802,11 +672,14 @@ with st.expander("❓ Need Help?", expanded=False):
         **Q: What if I don't have permission to create PRs?**  
         A: You'll need write access to the dbt repository. Contact your data team to request access.
         
+        **Q: How does this work without local git?**  
+        A: This feature uses the GitHub API to create branches, commit changes, and open PRs 
+        directly from the cloud. No local setup required!
+        
         ### Prerequisites
-        - GitHub CLI (`gh`) installed and authenticated
+        - GitHub Personal Access Token with `repo` scope
+        - OpenAI API key
         - Write access to the dbt repository
-        - Local clone of the dbt project
-        - OpenAI API key configured
-        - dbt Cloud credentials configured
+        - Environment variables configured in Streamlit Cloud secrets
         """
     )
