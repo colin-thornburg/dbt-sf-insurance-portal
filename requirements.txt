@@ -288,7 +288,7 @@ protobuf==6.31.0
     #   grpcio-status
     #   proto-plus
     #   streamlit
-pyarrow==16.1.0
+pyarrow==18.1.0
     # via
     #   -r requirements.in
     #   dbt-sl-sdk
