@@ -1,6 +1,6 @@
 # dbt Snowflake Insurance Portal
 
-A production-grade, multi-tenant insurance member portal built with **dbt Semantic Layer**, **Snowflake**, and **Streamlit**. This app demonstrates secure AI-powered analytics with row-level security, company-scoped tokens, and comprehensive audit logging.
+A multi-tenant insurance member portal built with **dbt Semantic Layer**, **Snowflake**, and **Streamlit**. This app demonstrates secure AI-powered analytics with row-level security, company-scoped tokens, and comprehensive audit logging.
 
 ## 🏗️ Architecture
 
