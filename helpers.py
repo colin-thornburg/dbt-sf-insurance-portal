@@ -1,10 +1,13 @@
 # stdlib
 import base64
+import binascii
 import json
 import urllib.parse
-from typing import List
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 # third party
+import pandas as pd
 import pyarrow as pa
 import streamlit as st
 
@@ -14,20 +17,236 @@ from client import ConnAttr
 from schema import Query
 
 
-def keys_exist_in_dict(keys_list, dct):
+def keys_exist_in_dict(keys_list: Iterable[str], dct: Mapping[str, Any]) -> bool:
     return all(key in dct for key in keys_list)
 
 
-def get_shared_elements(all_elements: List[List]):
-    if len(all_elements) == 0:
+MEMBER_ROSTER_PATH = Path(__file__).resolve().parent / "embedded-app" / "seeds" / "members.csv"
+USER_FILTER_DIMENSION = "member__email"
+
+COMPANY_ID_MAP = {
+    1001: "TechCorp",
+    1002: "RetailPlus",
+    1003: "ManufacturingCo",
+}
+
+COMPANY_DOMAIN_MAP = {
+    "techcorp.com": "TechCorp",
+    "retailplus.com": "RetailPlus",
+    "manufacturingco.com": "ManufacturingCo",
+}
+
+COMPANY_THEMES = {
+    "TechCorp": {
+        "font": "Inter",
+        "primary": "#4F46E5",
+        "primary_hover": "#4338CA",
+        "bg_start": "#EEF2FF",
+        "bg_end": "#FFFFFF",
+        "sidebar_bg": "#111827",
+        "sidebar_text": "#F9FAFB",
+        "text": "#111827",
+        "button_text": "#FFFFFF",
+    },
+    "RetailPlus": {
+        "font": "Poppins",
+        "primary": "#EA580C",
+        "primary_hover": "#C2410C",
+        "bg_start": "#FFF7ED",
+        "bg_end": "#FFFFFF",
+        "sidebar_bg": "#7F1D1D",
+        "sidebar_text": "#FDE68A",
+        "text": "#1F2937",
+        "button_text": "#FFFFFF",
+    },
+    "ManufacturingCo": {
+        "font": "Roboto",
+        "primary": "#0EA5E9",
+        "primary_hover": "#0284C7",
+        "bg_start": "#ECFEFF",
+        "bg_end": "#FFFFFF",
+        "sidebar_bg": "#0F172A",
+        "sidebar_text": "#E0F2FE",
+        "text": "#0F172A",
+        "button_text": "#FFFFFF",
+    },
+    "default": {
+        "font": "Inter",
+        "primary": "#2563EB",
+        "primary_hover": "#1D4ED8",
+        "bg_start": "#EFF6FF",
+        "bg_end": "#FFFFFF",
+        "sidebar_bg": "#1E293B",
+        "sidebar_text": "#F8FAFC",
+        "text": "#0F172A",
+        "button_text": "#FFFFFF",
+    },
+}
+
+
+def infer_company_name(member_row: pd.Series) -> Optional[str]:
+    company = member_row.get("company_name")
+    if isinstance(company, str) and company.strip():
+        return company.strip()
+
+    company_id = member_row.get("company_id")
+    if pd.notna(company_id):
+        company_id = int(company_id)
+        if company_id in COMPANY_ID_MAP:
+            return COMPANY_ID_MAP[company_id]
+
+    email = member_row.get("email", "")
+    if isinstance(email, str) and "@" in email:
+        domain = email.split("@")[-1].lower()
+        if domain in COMPANY_DOMAIN_MAP:
+            return COMPANY_DOMAIN_MAP[domain]
+
+    return None
+
+
+def get_shared_elements(all_elements: Sequence[Sequence[Any]]) -> List[Any]:
+    if not all_elements:
         return []
 
-    try:
-        unique = set(all_elements[0]).intersection(*all_elements[1:])
-    except IndexError:
-        unique = set(all_elements[0])
+    shared = set(all_elements[0])
+    for elements in all_elements[1:]:
+        shared.intersection_update(elements)
+        if not shared:
+            break
+    return list(shared)
 
-    return list(unique)
+
+@st.cache_data(show_spinner=False)
+def get_member_roster() -> pd.DataFrame:
+    try:
+        df = pd.read_csv(MEMBER_ROSTER_PATH)
+    except FileNotFoundError:
+        st.error(
+            "Member roster file not found. Ensure `embedded-app/seeds/members.csv` exists."
+        )
+        return pd.DataFrame()
+
+    required_columns = {"first_name", "last_name", "email"}
+    missing = required_columns.difference(df.columns)
+    if missing:
+        st.error(
+            "Member roster is missing required columns: " + ", ".join(sorted(missing))
+        )
+        return pd.DataFrame()
+
+    df["display_name"] = (
+        df["first_name"].fillna("")
+        + " "
+        + df["last_name"].fillna("")
+        + " · "
+        + df["email"].fillna("")
+    )
+    return df.sort_values(["first_name", "last_name", "email"]).reset_index(drop=True)
+
+
+def set_member_context(member_row: pd.Series) -> None:
+    member_row = member_row.copy()
+    company_display = infer_company_name(member_row)
+    member_row["company_display"] = company_display
+
+    st.session_state.selected_member_email = member_row.get("email")
+    st.session_state.selected_member_display = member_row.get("display_name")
+    st.session_state.selected_company_name = company_display
+    st.session_state.current_member = member_row.to_dict()
+
+
+def ensure_member_context() -> pd.Series:
+    roster = get_member_roster()
+    if roster.empty:
+        st.error("No members available for selection.")
+        st.stop()
+
+    email = st.session_state.get("selected_member_email")
+    if email:
+        match = roster[roster["email"] == email]
+        if not match.empty:
+            member_row = match.iloc[0]
+            set_member_context(member_row)
+            return pd.Series(st.session_state.current_member)
+
+    member_row = roster.iloc[0]
+    set_member_context(member_row)
+    return pd.Series(st.session_state.current_member)
+
+
+def get_company_theme(company_name: Optional[str]) -> Dict[str, str]:
+    if company_name and company_name in COMPANY_THEMES:
+        return COMPANY_THEMES[company_name]
+    return COMPANY_THEMES["default"]
+
+
+def apply_portal_theme(company_name: Optional[str]) -> None:
+    theme = get_company_theme(company_name)
+    font_import = theme["font"].replace(" ", "+")
+    st.markdown(
+        f"""
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family={font_import}:wght@400;500;600;700&display=swap');
+        html, body, [class*="css"] {{
+            font-family: '{theme['font']}', sans-serif;
+            color: {theme['text']};
+        }}
+        div[data-testid="stAppViewContainer"] {{
+            background: linear-gradient(160deg, {theme['bg_start']} 0%, {theme['bg_end']} 60%);
+        }}
+        div[data-testid="stSidebar"] {{
+            background: {theme['sidebar_bg']};
+            color: {theme['sidebar_text']};
+        }}
+        div[data-testid="stSidebar"] * {{
+            color: {theme['sidebar_text']} !important;
+        }}
+        h1, h2, h3, h4, h5, h6 {{
+            color: {theme['primary']};
+            font-weight: 600;
+        }}
+        .stButton>button {{
+            background-color: {theme['primary']};
+            color: {theme['button_text']};
+            border: none;
+            border-radius: 999px;
+            font-weight: 600;
+            padding: 0.5rem 1.5rem;
+        }}
+        .stButton>button:hover {{
+            background-color: {theme['primary_hover']};
+            color: {theme['button_text']};
+        }}
+        .stTabs [data-baseweb="tab"] {{
+            font-weight: 600;
+            color: {theme['text']};
+        }}
+        .stTabs [data-baseweb="tab"][aria-selected="true"] {{
+            color: {theme['primary']};
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_plan_documents() -> Dict[str, str]:
+    docs_dir = Path("docs/plan_details")
+    documents: Dict[str, str] = {}
+    if docs_dir.exists():
+        for path in sorted(docs_dir.glob("*.md")):
+            try:
+                documents[path.stem.lower()] = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+    return documents
+
+
+def get_portal_title(company_name: Optional[str]) -> str:
+    if company_name:
+        return f"{company_name} Portal"
+    return "Member Portal"
 
 
 def to_arrow_table(byte_string: str, to_pandas: bool = True) -> pa.Table:
@@ -103,48 +322,46 @@ def create_tabs(state: st.session_state, suffix: str) -> None:
         create_explorer_link(query)
 
 
-def encode_dictionary(d):
-    # Convert the dictionary to a JSON string
-    json_string = json.dumps(d)
+def encode_dictionary(data: Mapping[str, Any]) -> str:
+    """Serialize a mapping to a base64 encoded JSON string."""
 
-    # Convert the JSON string to bytes
-    json_bytes = json_string.encode("utf-8")
-
-    # Encode the bytes using Base64
-    base64_bytes = base64.b64encode(json_bytes)
-
-    # Convert the Base64 bytes back to string for easy storage/transmission
-    base64_string = base64_bytes.decode("utf-8")
-
-    return base64_string
+    json_bytes = json.dumps(data, separators=(",", ":")).encode("utf-8")
+    return base64.b64encode(json_bytes).decode("ascii")
 
 
-def decode_string(s: str):
-    # Convert the Base64 string back to bytes
-    try:
-        base64_bytes = s.encode("utf-8")
-    except AttributeError:
+def _coerce_single_value(value: Sequence[str] | str | None) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return value[0] if value else None
+
+
+def decode_string(value: Sequence[str] | str | None) -> Optional[Dict[str, Any]]:
+    """Decode a base64 encoded JSON payload into a dictionary."""
+
+    encoded = _coerce_single_value(value)
+    if not encoded:
         return None
 
-    # Decode the Base64 bytes to get back the original bytes
-    json_bytes = base64.b64decode(base64_bytes)
+    try:
+        json_bytes = base64.b64decode(encoded.encode("utf-8"), validate=True)
+    except (AttributeError, binascii.Error):
+        return None
 
-    # Convert bytes back to JSON string
-    json_string = json_bytes.decode("utf-8")
-
-    # Parse the JSON string back to a dictionary
-    d = json.loads(json_string)
-
-    return d
+    try:
+        return json.loads(json_bytes.decode("utf-8"))
+    except json.JSONDecodeError:
+        return None
 
 
-def set_context_query_param(params: List[str]):
+def set_context_query_param(params: Sequence[str]) -> None:
     d = {k: st.session_state[k] for k in params if k in st.session_state}
     encoded = encode_dictionary(d)
     st.query_params = {"context": encoded}
 
 
-def retrieve_context_query_param():
+def retrieve_context_query_param() -> Optional[Dict[str, Any]]:
     context = st.query_params.get("context", None)
     return decode_string(context)
 

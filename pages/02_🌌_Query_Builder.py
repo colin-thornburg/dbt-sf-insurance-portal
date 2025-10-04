@@ -1,32 +1,50 @@
 # stdlib
 from datetime import datetime, timedelta
-from typing import Dict
+from typing import Dict, List
 
 # third party
 import streamlit as st
 
 # first party
-from client import get_query_results
+from client import ensure_connection, get_query_results
 from helpers import (
+    USER_FILTER_DIMENSION,
     construct_cli_command,
     create_graphql_code,
     create_python_sdk_code,
     create_tabs,
+    ensure_member_context,
+    get_portal_title,
     get_shared_elements,
     to_arrow_table,
 )
+from styles import apply_glassmorphic_theme
 from queries import GRAPHQL_QUERIES
-from schema import Query, QueryLoader
+from schema import Query, QueryLoader, WhereInput
 
 st.set_page_config(
-    page_title="Query Builder",
+    page_title="AI Benefits Portal - Query Builder",
     page_icon="🌌",
     layout="wide",
 )
 
-if "conn" not in st.session_state or st.session_state.conn is None:
-    st.warning("Go to home page and enter your JDBC URL")
-    st.stop()
+# Rename the sidebar label from "app" to "Authentication"
+st.markdown("""
+<style>
+    [data-testid="stSidebarNav"] ul li:first-child a span {
+        display: none;
+    }
+    [data-testid="stSidebarNav"] ul li:first-child a::before {
+        content: "🔐 Authentication";
+        margin-left: 0;
+    }
+    [data-testid="stSidebarNav"] ul li:first-child a {
+        padding-left: 1rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+ensure_connection()
 
 if "metric_dict" not in st.session_state:
     st.warning(
@@ -34,6 +52,34 @@ if "metric_dict" not in st.session_state:
         "job has been run successfully."
     )
     st.stop()
+
+current_member = ensure_member_context()
+current_member_email = current_member.get("email")
+if not current_member_email:
+    st.error("Selected member does not have an email address configured.")
+    st.stop()
+
+USER_FILTER_SQL = f"{{{{ Dimension('{USER_FILTER_DIMENSION}') }}}} = '{current_member_email}'"
+company_name = current_member.get("company_display")
+
+# Apply glassmorphic theme with company-specific colors
+apply_glassmorphic_theme(company_name)
+portal_title = get_portal_title(company_name)
+st.title(f"{portal_title} · Query Builder")
+
+
+def ensure_where_inputs(where_inputs: List[WhereInput] | None) -> List[WhereInput]:
+    where_inputs = list(where_inputs or [])
+    if not any(w.sql == USER_FILTER_SQL for w in where_inputs):
+        where_inputs.append(WhereInput(sql=USER_FILTER_SQL))
+    return where_inputs
+
+
+def ensure_where_dicts(where_dicts: List[Dict] | None) -> List[Dict]:
+    where_dicts = list(where_dicts or [])
+    if not any(w.get("sql") == USER_FILTER_SQL for w in where_dicts):
+        where_dicts.append({"sql": USER_FILTER_SQL})
+    return where_dicts
 
 
 OPERATORS = {
@@ -80,6 +126,7 @@ def get_categorical_kwargs(dimension: str, operator: str):
             "variables": {
                 "groupBy": [{"name": dimension}],
                 "metrics": [],
+                "where": ensure_where_dicts(None),
             },
         }
         with st.spinner("Retrieving dimension values..."):
@@ -156,7 +203,9 @@ if "order_items" not in st.session_state:
     st.session_state.order_items = 0
 
 
-st.write("# Build a Query")
+st.caption(
+    f"All queries are automatically filtered to {current_member.get('first_name', '')} {current_member.get('last_name', '')} ({current_member_email}). Switch context from the Home page."
+)
 
 ad_hoc_tab, saved_query_tab = st.tabs(["Ad Hoc", "Saved Query"])
 
@@ -306,6 +355,7 @@ with ad_hoc_tab:
     col1.caption("If set to 0, no limit will be applied")
 
     query = QueryLoader(st.session_state).create()
+    query = query.model_copy(update={"where": ensure_where_inputs(query.where)})
     with st.expander("View API Request", expanded=False):
         tab1, tab2, tab3, tab4 = st.tabs(["GraphQL", "JDBC", "Python SDK", "CLI"])
         python_code = create_graphql_code(query)
@@ -369,6 +419,7 @@ with saved_query_tab:
             groupBy=query_params.get("groupBy") or [],
             where=where,
         )
+        query = query.model_copy(update={"where": ensure_where_inputs(query.where)})
 
         with st.expander("View API Request", expanded=False):
             tab1, tab2, tab3 = st.tabs(["GraphQL", "JDBC", "Python SDK"])

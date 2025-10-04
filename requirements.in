@@ -6,7 +6,7 @@ langchain~=0.3.0
 langchain-openai~=0.2.0
 langchain-core~=0.3.0
 streamlit-authenticator==0.3.2
-dbt-sl-sdk[sync]
+dbt-sl-sdk[sync]==0.13.0
 langchain-google-vertexai
 langchain-anthropic
 langchain-groq
@@ -16,3 +16,10 @@ faiss-cpu
 streamlit-feedback
 braintrust
 braintrust-langchain
+dbt-mcp==0.8.1
+mcp[cli]==1.10.1
+uvicorn==0.30.6
+openai-agents==0.1.0
+griffe
+types-requests
+plotly
