@@ -133,11 +133,11 @@ SEMANTIC_MODELS_FILE = "models/semantic/semantic_models.yml"
 
 def validate_environment() -> bool:
     """Validate required environment variables and directories."""
+    # DBT_PROJECT_DIR is only needed for local development, not for Streamlit Cloud
     required_env = [
         "DBT_HOST",
         "DBT_TOKEN",
         "DBT_PROD_ENV_ID",
-        "DBT_PROJECT_DIR",
         "OPENAI_API_KEY",
     ]
     missing = [env for env in required_env if not os.getenv(env)]
@@ -146,16 +146,35 @@ def validate_environment() -> bool:
             "Missing required environment variables: " + ", ".join(missing)
         )
         return False
-    if not Path(DBT_MCP_ENV_FILE).exists():
-        st.error(
-            f"MCP environment file not found at `{DBT_MCP_ENV_FILE}`. Set `DBT_MCP_ENV_FILE` or create the file."
+    
+    # Only validate local paths if DBT_PROJECT_DIR is set (local development)
+    if DBT_PROJECT_DIR:
+        if not Path(DBT_MCP_ENV_FILE).exists():
+            st.error(
+                f"MCP environment file not found at `{DBT_MCP_ENV_FILE}`. Set `DBT_MCP_ENV_FILE` or create the file."
+            )
+            return False
+        if not Path(EMBEDDED_APP_DIR).exists():
+            st.error(
+                f"dbt project directory not found at `{EMBEDDED_APP_DIR}`. Clone the repository first."
+            )
+            return False
+    else:
+        # Running in Streamlit Cloud - this feature requires local setup
+        st.info(
+            """
+            ℹ️ **Request a Metric** requires a local dbt project setup.
+            
+            This feature creates pull requests in your dbt repository, which requires:
+            - Local clone of your dbt project
+            - GitHub CLI installed and authenticated
+            - Write access to the repository
+            
+            This feature is currently only available when running locally.
+            """
         )
         return False
-    if not Path(EMBEDDED_APP_DIR).exists():
-        st.error(
-            f"dbt project directory not found at `{EMBEDDED_APP_DIR}`. Clone the repository first."
-        )
-        return False
+    
     return True
 
 
@@ -182,19 +201,7 @@ def validate_git_state() -> tuple[bool, str]:
         if result.returncode != 0:
             return False, "GitHub CLI is not authenticated. Run: `gh auth login`"
 
-        # Check git status
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=EMBEDDED_APP_DIR,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-
-        if result.stdout.strip():
-            return False, f"The dbt project has uncommitted changes. Please commit or stash them first.\n\nUncommitted files:\n{result.stdout}"
-
-        # Check current branch
+        # For demo purposes: automatically switch to main if not already on it
         result = subprocess.run(
             ["git", "branch", "--show-current"],
             cwd=EMBEDDED_APP_DIR,
@@ -205,9 +212,45 @@ def validate_git_state() -> tuple[bool, str]:
 
         current_branch = result.stdout.strip()
         if current_branch != "main":
-            return False, f"Please switch to the 'main' branch first. Currently on: {current_branch}"
+            logger.info(f"Currently on branch '{current_branch}', switching to main...")
+            try:
+                # Switch to main branch
+                subprocess.run(
+                    ["git", "checkout", "main"],
+                    cwd=EMBEDDED_APP_DIR,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                logger.info("Successfully switched to main branch")
+            except subprocess.CalledProcessError as e:
+                return False, f"Failed to switch to main branch: {e.stderr if e.stderr else str(e)}"
 
-        # Check if branch is up to date
+        # Check for uncommitted changes (but be lenient for demo)
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=EMBEDDED_APP_DIR,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        if result.stdout.strip():
+            # For demo: try to stash changes automatically
+            logger.info("Found uncommitted changes, attempting to stash...")
+            try:
+                subprocess.run(
+                    ["git", "stash", "-u"],
+                    cwd=EMBEDDED_APP_DIR,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                logger.info("Successfully stashed uncommitted changes")
+            except subprocess.CalledProcessError as e:
+                return False, f"The dbt project has uncommitted changes. Please commit or stash them first.\n\nUncommitted files:\n{result.stdout}"
+
+        # Fetch and pull latest from origin
         subprocess.run(
             ["git", "fetch", "origin"],
             cwd=EMBEDDED_APP_DIR,
@@ -215,19 +258,15 @@ def validate_git_state() -> tuple[bool, str]:
             check=True
         )
 
-        result = subprocess.run(
-            ["git", "rev-list", "--count", "HEAD..origin/main"],
+        # Pull latest main
+        subprocess.run(
+            ["git", "pull", "origin", "main"],
             cwd=EMBEDDED_APP_DIR,
             capture_output=True,
-            text=True,
             check=True
         )
 
-        commits_behind = int(result.stdout.strip())
-        if commits_behind > 0:
-            return False, f"Your local 'main' branch is {commits_behind} commit(s) behind origin/main. Run: `git pull origin main`"
-
-        return True, "Git state is clean"
+        return True, "Git state is ready"
 
     except subprocess.CalledProcessError as e:
         logger.error(f"Git validation error: {e.stderr if e.stderr else str(e)}")
