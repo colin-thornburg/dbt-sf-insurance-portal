@@ -12,7 +12,6 @@ import pyarrow as pa
 import streamlit as st
 
 # first party
-from chart import create_chart
 from client import ConnAttr
 from schema import Query
 
@@ -312,12 +311,10 @@ def create_tabs(state: st.session_state, suffix: str) -> None:
         sql = getattr(state, f"compiled_sql_{suffix}")
         df = getattr(state, f"df_{suffix}")
         query = getattr(state, f"query_{suffix}")
-        tab1, tab2, tab3 = st.tabs(["Chart", "Data", "SQL"])
+        tab1, tab2 = st.tabs(["📊 Data", "💻 SQL"])
         with tab1:
-            create_chart(df, query, suffix)
-        with tab2:
             st.dataframe(df, use_container_width=True)
-        with tab3:
+        with tab2:
             st.code(sql, language="sql")
         create_explorer_link(query)
 
