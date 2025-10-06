@@ -113,7 +113,7 @@ def run_member_query(
     try:
         gql_query = Query(**query_kwargs)
         payload = {"query": gql_query.gql, "variables": gql_query.variables}
-        data = get_query_results(payload, progress=False, conn=conn)
+        data = get_query_results(payload, progress=False, conn=st.session_state.conn)
         arrow_bytes = data.get("arrowResult")
         if not arrow_bytes:
             df = pd.DataFrame()
