@@ -1,0 +1,36 @@
+# Streamlit Configuration
+# This file forces the app to use light mode as the base theme
+# Custom styling from styles.py will overlay on top of this
+
+[theme]
+# Force light mode for all components
+base="light"
+
+# Primary color (can be overridden by custom CSS)
+primaryColor="#4F46E5"
+
+# Background color (will be overridden by gradient CSS)
+backgroundColor="#ffffff"
+
+# Secondary background color for widgets
+secondaryBackgroundColor="#f8f9fa"
+
+# Text color
+textColor="#1e293b"
+
+# Font family
+font="sans serif"
+
+[client]
+# Show error details
+showErrorDetails = true
+
+[server]
+# Enable CORS for embedded content
+enableCORS = true
+enableXsrfProtection = true
+
+[browser]
+# Gather usage stats (set to false if you want to disable)
+gatherUsageStats = false
+
