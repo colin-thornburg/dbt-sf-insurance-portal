@@ -197,30 +197,26 @@ def build_sample_questions(
 
 def call_openai(question: str, user_email: str) -> str:
     client = get_openai_client()
-    response = client.responses.create(
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
-        input=[
+        messages=[
             {
                 "role": "system",
-                "content": [
-                    {"type": "input_text", "text": SYSTEM_PROMPT},
-                ],
+                "content": SYSTEM_PROMPT,
             },
             {
                 "role": "user",
-                "content": [
-                    {"type": "input_text", "text": build_user_context(question, user_email)},
-                ],
+                "content": build_user_context(question, user_email),
             },
         ],
-        max_output_tokens=600,
+        max_tokens=600,
+        response_format={"type": "json_object"},
     )
-    if not response.output:
+    
+    if not response.choices:
         return "{}"
-
-    content_item = response.output[0].content[0]
-    text = getattr(content_item, "text", None)
-    return text or "{}"
+    
+    return response.choices[0].message.content or "{}"
 
 
 def parse_response(raw: str) -> Dict:
